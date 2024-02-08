@@ -8,5 +8,5 @@ const asyncHandler = (fn) => async(req, res, next) => {
         })
     }
 }
-
+// NOTE : This implementation uses the async code but in actual it is implemented in promises using higher order functions
 export {asyncHandler}
