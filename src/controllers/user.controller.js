@@ -4,6 +4,7 @@ import {User} from "../models/user.model.js"
 import {uploadOnCloudinary} from "../utils/cloudinary.js"
 import { ApiRespose } from "../utils/apiResponse.js"
 import jwt from "jsonwebtoken"
+import mongoose from "mongoose"
 const genrateAccessAndRefreshToken = async (userId)=>{
     try {
         const user = await User.findById(userId);
@@ -191,7 +192,7 @@ const updateAccountDetails = asyncHandler(async(req, res)=>{
     if(!fullName || !email){
         throw new ApiError(400, "All fields are required");
     }
-    const user = User.findByIdAndUpdate(req.user?._id,{$set : {fullname : fullName, email : email }},{new : true}).select("-password")
+    const user = await User.findByIdAndUpdate(req.user?._id,{$set : {fullname : fullName, email : email }},{new : true}).select("-password")
     res.status(200)
        .json(new ApiRespose(200, user, "Account Detailsupdated successfull"));
 })
@@ -211,7 +212,7 @@ const updateUserAvatar = asyncHandler(async (req, res) =>{
     }), "avatar updated successfully")
 
 })
-
+//TODO : add logic to delete the image that is saved on cloudinary to be deleted while uploading
 const updateUserCoverImage = asyncHandler(async (req, res) =>{
     const coverImageLocalPath = req.file?.path
     if(!coverImageLocalPath){
@@ -227,4 +228,97 @@ const updateUserCoverImage = asyncHandler(async (req, res) =>{
     }), "Cover Image Updated Successfully")
 
 })
-export {registerUser, loginUser, logOutUser, refreshAccessToken, changeCurrentPassword, getCurrentUser, updateAccountDetails, updateUserAvatar}
+
+const getUserChannelProfile = asyncHandler(async(req, res) =>{
+    const {username} = req.body;
+    if(!username?.trim()){
+        throw new ApiError(400,"Username is missing");
+    }
+    const channel = User.aggregate([{
+            $match : {username : username.toLowerCase(),
+        }
+    },
+    {
+        $lookup : {
+            from : "subscriptions",
+            localField : "_id",
+            foreignField : "channel",
+            as : "subscribers"
+        }
+    },
+    {
+        $lookup : {
+            from : "subscriptions",
+            localField : "_id",
+            foreignField : "subscribers",
+            as : "subscribedTo"
+        }
+    },{
+        $addFields : {
+            subscribersCount : {$size : "$subscribers"},
+            channelsSubscriberedToCount : {$size : "subscribedTo"},
+            isSubscribed : {
+                $cond : {
+                    if : {$in : [req.user._id, "$subscribers.subscriber"]},
+                    then : true,
+                    else : false
+                }
+            }
+        }
+    },
+    {
+        $project : {
+            fullname : 1,
+            email : 1,
+            subscribersCount : 1,
+            channelsSubscriberedToCount : 1,
+            isSubscribed : 1,
+            avatar : 1,
+            coverImage : 1
+        }
+    }
+])
+if(!channel?.length){
+    throw new ApiError(404, "Channel does not exists for user")
+}
+return res.status(200).json(new ApiRespose(200, channel[0], "data fetched successfully"))
+})
+
+const getUserWatchHistory = asyncHandler(async (req, res)=>{
+    const user = User.aggregate([
+        {
+            $match : new mongoose.Types.ObjectId(req.user._id)// directly writing req.user._id will provide the mongoose managed id which is converted by mongodb behind the seen to look in db. but the aggregation pipeline code will be executed without the help of mongoose so hence it is our responsiblity to convert object id 
+        },
+        {
+            $lookup:{
+                from: "videos",
+                foreignField : "_id",
+                localField : "watchHistory",
+                as : "watchHistory",
+                pipeline:{
+                    $lookup : {
+                        from : "users",
+                        foreignField: "_id",
+                        localField: "owner",
+                        as : "owner",
+                        pipeline:{
+                            $project:{
+                                fullname : 1,
+                                email: 1
+                            }
+                        }
+                    },
+                    $addFields:{
+                        owner : {
+                            $first : "$owner"
+                        }
+                    }
+                }
+            }
+        }
+    ])
+    return res.status(200).json(new ApiRespose(200, user[0].watchHistory, "watch history fetched successfully"))
+})
+
+
+export {registerUser, loginUser, logOutUser, refreshAccessToken, changeCurrentPassword, getCurrentUser, updateAccountDetails, updateUserAvatar, updateUserCoverImage, getUserChannelProfile}
